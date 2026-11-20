@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.100.0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Format, Clippy, Test & Doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" \
+            --profile minimal \
+            --component clippy,rustfmt
+
+      - name: Check formatting
+        run: cargo +${RUST_TOOLCHAIN} fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo +${RUST_TOOLCHAIN} clippy --all-targets --locked -- -D warnings
+
+      - name: Run offline tests
+        run: cargo +${RUST_TOOLCHAIN} test --all-targets --locked
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo +${RUST_TOOLCHAIN} doc --no-deps --locked
