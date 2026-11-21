@@ -600,10 +600,15 @@ impl VietstockClient {
     /// Rate limited like every other request, and bounded by the builder's
     /// [`download_timeout`](VietstockClientBuilder::download_timeout) instead of
     /// the API timeout. Needs no session.
+    ///
+    /// The library lists older files as `http://static*.vietstock.vn/...`; the
+    /// client is HTTPS-only, so a plain-HTTP link on a Vietstock host is fetched
+    /// over HTTPS (the CDN serves the same file there). Other plain-HTTP URLs fail.
     #[tracing::instrument(skip(self), err)]
     pub async fn download_url(&self, url: &str) -> Result<Vec<u8>, ApiError> {
         let t0 = Instant::now();
-        let request = self.client.get(url).timeout(self.download_timeout);
+        let url = https_on_vietstock(url);
+        let request = self.client.get(url.as_ref()).timeout(self.download_timeout);
         let resp = self.send(request).await?;
         let body = Self::check_and_read_bytes(resp).await?;
         info!(%url, size = body.len(), elapsed_ms = t0.elapsed().as_millis(), "document downloaded");
@@ -1766,6 +1771,28 @@ impl VietstockClient {
 // Utility Functions
 // ---------------------------------------------------------------------------
 
+/// `url` with `http://` turned into `https://` when its host is `vietstock.vn` or
+/// a subdomain of it; any other URL as given.
+fn https_on_vietstock(url: &str) -> std::borrow::Cow<'_, str> {
+    let Some(rest) = url
+        .get(..7)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("http://"))
+        .map(|_| &url[7..])
+    else {
+        return url.into();
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if host == "vietstock.vn" || host.ends_with(".vietstock.vn") {
+        format!("https://{rest}").into()
+    } else {
+        url.into()
+    }
+}
+
 fn validate_stock_code(code: &str) -> Result<String, ApiError> {
     let trimmed = code.trim();
     if trimmed.is_empty() {
@@ -2080,6 +2107,27 @@ mod tests {
         }
         starts.sort();
         assert_eq!(starts, [0, 500, 1000].map(Duration::from_millis).to_vec());
+    }
+
+    #[test]
+    fn plain_http_links_on_vietstock_hosts_go_over_https() {
+        assert_eq!(
+            https_on_vietstock("http://static2.vietstock.vn/data/HOSE/2016/BCTC/VN/QUY 4/a.pdf"),
+            "https://static2.vietstock.vn/data/HOSE/2016/BCTC/VN/QUY 4/a.pdf"
+        );
+        assert_eq!(
+            https_on_vietstock("HTTP://Vietstock.vn/x.pdf"),
+            "https://Vietstock.vn/x.pdf"
+        );
+        // Other hosts, look-alikes and HTTPS links are left alone.
+        for url in [
+            "http://127.0.0.1:9/x.pdf",
+            "http://evilvietstock.vn/x.pdf",
+            "http://static2.vietstock.vn.evil.com/x.pdf",
+            "https://static2.vietstock.vn/x.pdf",
+        ] {
+            assert_eq!(https_on_vietstock(url), url);
+        }
     }
 
     /// Requests that need no session (`get_years`, `get_document_types`, file

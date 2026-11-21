@@ -182,7 +182,11 @@ take longer than 30 s. `download_url(&str)` needs only the file URL and no sessi
 
 ## File Formats
 
-Documents are stored on a CDN (`static2.vietstock.vn`) and served as:
+Documents are stored on a CDN (`static2.vietstock.vn`). The library lists older
+files (before about 2022) with `http://` URLs; the client is HTTPS-only, so
+`download_url` fetches a plain-HTTP link on a `vietstock.vn` host over HTTPS (the
+CDN serves the same bytes there) and refuses plain HTTP to any other host. Files are
+served as:
 - `.zip` — Multi-file archives (may contain PDFs + supplementary documents); **note: trailing spaces on extension** (e.g., `".zip "`)
 - `.pdf` — Single PDF documents
 
